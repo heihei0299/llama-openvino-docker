@@ -1,0 +1,103 @@
+# ============================================
+# llama-openvino-docker — GitHub Actions
+# 自动构建 Docker 镜像并推送至 GitHub Container Registry
+# ============================================
+#
+# 触发条件:
+#   - push 到 main 分支
+#   - 创建标签 v*
+#   - PR 到 main（仅构建验证，不推送）
+#
+# 首次使用:
+#   在 GitHub 仓库 Settings → Actions → General 中
+#   确认 "Workflow permissions" 设为 "Read and write permissions"
+
+name: Docker Build & Push
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [base, light, server]
+        include:
+          - target: base
+          - target: light
+          - target: server
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=${{ matrix.target }}
+            type=raw,value=${{ matrix.target }}-latest
+            type=sha,prefix=${{ matrix.target }}-
+
+      - name: Build and push ${{ matrix.target }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            APP_VERSION=${{ github.ref_name }}
+            APP_REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  latest:
+    if: github.event_name != 'pull_request'
+    needs: [build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag light as latest
+        run: |
+          docker buildx imagetools create \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:light-latest"

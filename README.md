@@ -6,6 +6,55 @@ llama.cpp + OpenVINO 后端 — 针对 Intel CPU/GPU/NPU 极致优化的 Docker 
 
 ---
 
+## 快速开始（使用预编译镜像）
+
+GitHub Actions 自动构建并推送镜像到 GitHub Container Registry，无需本地编译即可使用。
+
+```bash
+# 1. 拉取镜像
+docker pull ghcr.io/heihei0299/llama-openvino-docker:light
+docker pull ghcr.io/heihei0299/llama-openvino-docker:server
+
+# 2. 下载模型
+mkdir -p ~/models/
+wget https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+     -O ~/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+
+# 3. CPU 模式运行
+docker run --rm -it -v ~/models:/models \
+    ghcr.io/heihei0299/llama-openvino-docker:light \
+    --no-warmup -c 1024 -m /models/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+
+# 4. GPU 模式运行
+docker run --rm -it -v ~/models:/models \
+    --device=/dev/dri \
+    --group-add=$(stat -c "%g" /dev/dri/render* | head -n 1) \
+    -u $(id -u):$(id -g) \
+    --env=GGML_OPENVINO_DEVICE=GPU \
+    --env=GGML_OPENVINO_STATEFUL_EXECUTION=1 \
+    ghcr.io/heihei0299/llama-openvino-docker:light \
+    --no-warmup -c 1024 -m /models/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+
+# 5. API 服务器模式
+docker run --rm -it -p 8080:8080 -v ~/models:/models \
+    ghcr.io/heihei0299/llama-openvino-docker:server \
+    --no-warmup -c 8192 -m /models/Llama-3.2-1B-Instruct-Q4_K_M.gguf --host 0.0.0.0
+```
+
+可用镜像标签：
+
+| 标签 | 说明 |
+|------|------|
+| `:latest` | 最新版 CLI（指向 light） |
+| `:light` | 仅 llama-cli（CPU/GPU/NPU） |
+| `:server` | llama-server + health check（API 服务） |
+| `:base` | 仅运行时库 |
+
+> 预编译镜像使用 Ubuntu 24.04，集成 Intel GPU 驱动（IGC + Compute Runtime + Level Zero）。
+> 如需自定义编译参数或验证构建过程，请参考下方「本地构建」章节。
+
+---
+
 ## 特性
 
 - **Intel CPU 极致优化** — OpenVINO 后端，充分利用 Intel CPU 的 AVX/VNNI 指令集
@@ -17,7 +66,7 @@ llama.cpp + OpenVINO 后端 — 针对 Intel CPU/GPU/NPU 极致优化的 Docker 
 
 ## 1. 构建
 
-### 方式 A：Docker 构建（推荐）
+### 本地构建
 
 **前置要求**：确保 Docker 已安装且当前用户有权限使用：
 ```bash

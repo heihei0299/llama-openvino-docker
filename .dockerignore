@@ -1,0 +1,22 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+AGENTS.md
+
+# 文档（不参与构建）
+README.md
+
+# 本地系统文件
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 本地构建产物（如手动 git clone 的 llama.cpp 目录）
+llama.cpp/
+build/
+
+# Docker 元数据
+.dockerignore
