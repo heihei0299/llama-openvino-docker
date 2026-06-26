@@ -11,7 +11,6 @@ llama.cpp + OpenVINO 后端 — 针对 Intel CPU/GPU/NPU 极致优化的 Docker 
 - **Intel CPU 极致优化** — OpenVINO 后端，充分利用 Intel CPU 的 AVX/VNNI 指令集
 - **跨设备支持** — 同一套方案覆盖 Intel CPU / GPU / NPU
 - **零依赖运行** — 编译后无需 Python 环境
-- **Arch Linux 原生** — 支持 AUR 包管理器和手动编译
 - **Docker 容器化** — 基于 Ubuntu 24.04 的多阶段构建
 
 ---
@@ -44,23 +43,6 @@ docker build --target=server -t llama-openvino:server .
 docker build -t llama-openvino:latest .
 ```
 
-### 方式 B：Arch Linux 本地编译
-
-```bash
-chmod +x install-arch.sh
-./install-arch.sh
-```
-
-支持三种 OpenVINO 安装方式（通过 `OPENVINO_METHOD` 环境变量选择）：
-
-| 方式 | 命令 | 说明 |
-|------|------|------|
-| AUR（默认） | `./install-arch.sh` | 从 AUR 安装 `openvino`（源码编译） |
-| AUR 二进制 | `USE_AUR_BIN=1 ./install-arch.sh` | 安装 `openvino-bin`（二进制包，快速） |
-| Intel 归档 | `OPENVINO_METHOD=intel ./install-arch.sh` | 从 Intel 官方下载 OpenVINO 2026.2 |
-
-构建完成后二进制位于 `./llama.cpp/build/ReleaseOV/bin/`。
-
 ---
 
 ## 2. 下载示例模型
@@ -80,7 +62,7 @@ wget https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Ll
 
 ## 3. 运行
 
-### 3.1 Docker 运行
+### Docker 运行
 
 将模型文件保存到 `~/models/` 后挂载到容器：
 
@@ -92,14 +74,24 @@ docker run --rm -it -v ~/models:/models llama-openvino:light \
 
 #### Intel GPU 加速
 
-> **前置要求**：宿主机需要安装 Intel GPU 驱动并确保 OpenCL 可用。
+> **前置要求**：宿主机需要安装 Intel GPU 驱动并确保 OpenCL / Level Zero 可用。
 > 先验证宿主机：
 > ```bash
-> # 检查 Intel GPU 设备是否存在
+> # 步骤 1: 检查 Intel GPU 设备是否存在
 > ls -la /dev/dri/
-> # 检查 Intel GPU OpenCL 是否可用
-> sudo pacman -S clinfo && clinfo | grep -i "intel\|device name"
+>
+> # 步骤 2: 检查 Intel GPU OpenCL 是否可用
+> sudo apt install clinfo
+> clinfo | grep -E "Device Name|Device Version|Driver Version"
+>
+> # 步骤 3: 检查 Level Zero GPU 驱动（OpenVINO GPU 插件需要）
+> ldconfig -p | grep libze_intel_gpu
+>
+> # 步骤 4: 确认 i915 内核模块已加载
+> lsmod | grep i915
 > ```
+>
+> 如果以上检查均有输出，说明 GPU 驱动已正确安装。
 
 ```bash
 docker run --rm -it -v ~/models:/models \
@@ -156,39 +148,6 @@ curl -f http://localhost:8080/health
 curl -X POST "http://localhost:8080/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d '{"messages":[{"role":"user","content":"Write a poem about OpenVINO"}],"max_tokens":100}'
-```
-
-### 3.2 本地运行（Arch Linux 构建后）
-
-```bash
-# 加载 OpenVINO 环境（仅 Intel 归档方式需要）
-source /opt/intel/openvino/setupvars.sh
-
-# 设置目标设备（默认 CPU）
-export GGML_OPENVINO_DEVICE=CPU
-
-# 可选：启用状态化 KV 缓存（GPU 推荐）
-export GGML_OPENVINO_STATEFUL_EXECUTION=1
-
-# 聊天模式
-./llama.cpp/build/ReleaseOV/bin/llama-cli \
-    -m ~/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf -c 1024
-
-# Benchmark（需要 -fa 1）
-GGML_OPENVINO_STATEFUL_EXECUTION=1 \
-    GGML_OPENVINO_DEVICE=GPU \
-    ./llama.cpp/build/ReleaseOV/bin/llama-bench \
-    -m ~/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf -fa 1
-
-# 简答模式
-./llama.cpp/build/ReleaseOV/bin/llama-simple \
-    -m ~/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
-    -n 50 "The story of AI is "
-
-# API 服务器
-./llama.cpp/build/ReleaseOV/bin/llama-server \
-    -m ~/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
-    --port 8080 -c 8192 --host 0.0.0.0
 ```
 
 ---
@@ -299,7 +258,6 @@ E srv decode: Context size has been exceeded. off = 0, n_batch = 1
 
 ```
 llama-openvino-docker/
-├── install-arch.sh     # 🚀 Arch Linux 一键安装脚本
 ├── Dockerfile          # 🐳 Docker 多阶段构建（Ubuntu 24.04）
 ├── README.md           # 📖 本文档
 └── AGENTS.md           # 📋 AI 辅助记忆文件

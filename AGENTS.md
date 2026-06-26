@@ -4,59 +4,64 @@ Docker 化部署 llama.cpp + OpenVINO 后端的安装方案。
 
 ## Project
 
-- **Goal**: 提供跨 Linux 发行版的一键安装脚本，简化 llama.cpp 与 Intel OpenVINO 后端的编译部署
-- **Stack**: Bash 脚本，无外部依赖
-- **Entry point**: `install-arch.sh` — Arch Linux 安装脚本（当前唯一实现）
-- **Package manager target**: Arch Linux (`pacman` + AUR)
+- **Goal**: 提供 Docker 化方案，简化 llama.cpp 与 Intel OpenVINO 后端的编译部署
+- **Stack**: Dockerfile + Bash
+- **Entry point**: `Dockerfile` — 多阶段构建
+- **Docker base**: Ubuntu 24.04
 
 ## Commands
 
 ```bash
-# 语法检查
-bash -n install-arch.sh
+# 构建各目标
+docker build --target=base   -t llama-openvino:base   .
+docker build --target=full   -t llama-openvino:full   .
+docker build --target=light  -t llama-openvino:light  .
+docker build --target=server -t llama-openvino:server .
+docker build                  -t llama-openvino:latest .
 
-# 运行安装（Arch Linux）
-chmod +x install-arch.sh
-./install-arch.sh
+# 运行（CPU）
+docker run --rm -it -v ~/models:/models llama-openvino:light \
+    --no-warmup -c 1024 -m /models/model.gguf
 
-# 使用 openvino-bin 二进制包（更快）
-USE_AUR_BIN=1 ./install-arch.sh
-
-# 使用 Intel 官方归档而非 AUR
-OPENVINO_METHOD=intel ./install-arch.sh
+# 运行（Intel GPU）
+docker run --rm -it -v ~/models:/models \
+    --device=/dev/dri \
+    --group-add=$(stat -c "%g" /dev/dri/render* | head -n 1) \
+    -u $(id -u):$(id -g) \
+    --env=GGML_OPENVINO_DEVICE=GPU \
+    --env=GGML_OPENVINO_STATEFUL_EXECUTION=1 \
+    llama-openvino:light \
+    --no-warmup -c 1024 -m /models/model.gguf
 ```
 
-无测试框架、无 lint 工具；验证方式为 bash 语法检查 + 执行验证。
+验证方式：`docker build` 走完所有层即为构建成功。
 
 ## Architecture
 
 ```
 llama-openvino-docker/
-├── README.md           # 项目说明 + 快速开始
-├── install-arch.sh     # Arch Linux 安装脚本
 ├── Dockerfile          # Docker 多阶段构建（OpenVINO 后端）
+├── README.md           # 项目说明 + 快速开始
 └── AGENTS.md           # 本文件
 ```
 
-`install-arch.sh` 内部模块：
+### Dockerfile 内部阶段
 
-1. **check_arch** — 检测 `/etc/arch-release`
-2. **install_pacman_deps** — 通过 `pacman` 安装编译工具链（`base-devel`, `cmake`, `ninja`, `opencl-headers`, `ocl-icd`, `intel-graphics-compiler` 等）
-3. **install_openvino** — 两种方式：
-   - `aur`（默认）：通过 yay/paru 安装 `openvino`（或 `openvino-bin`），自动安装 paru 如果缺失
-   - `intel`：从 Intel 官方归档下载 openvino_toolkit 2026.2 并解压到 `/opt/intel/openvino`
-4. **build_llamacpp** — 克隆 `ggml-org/llama.cpp` 并用 CMake + Ninja 构建（`-DGGML_OPENVINO=ON`）
-5. **print_usage** — 打印使用说明（设备选择、模型下载、运行示例）
+1. **build** — 安装编译工具链，下载 OpenVINO 2026.2 归档，编译 llama.cpp（`-DGGML_OPENVINO=ON`）
+2. **base** — 最小 Ubuntu 24.04 运行时 + Intel GPU 驱动（IGC + Compute Runtime + Level Zero）
+3. **full** — base + 所有二进制和 Python 工具
+4. **light** — base + 仅 `llama-cli`（默认目标）
+5. **server** — base + 仅 `llama-server`，默认 `LLAMA_ARG_CTX_SIZE=8192`
 
-可配置的环境变量：`OPENVINO_METHOD`, `USE_AUR_BIN`, `LLAMA_CPP_DIR`, `BUILD_DIR`, `GGML_OPENVINO_DEVICE`, `JOBS`
+GPU 驱动从 Intel GitHub Releases 下载精确版本，确保 OpenVINO GPU 插件兼容性。
 
 ## Docker 构建目标
 
 | 目标 | 说明 |
 |------|------|
-| `base` | 运行时库 + 最小依赖（OCL-ICD） |
+| `base` | 运行时库 + 最小依赖（OCL-ICD）+ GPU 驱动 |
 | `full` | 所有二进制 + Python 工具 |
-| `light` | 仅 llama-cli |
+| `light` | 仅 llama-cli（默认） |
 | `server` | 仅 llama-server + health check |
 
 构建命令示例：`docker build --target=light -t llama-openvino:light .`
@@ -66,12 +71,9 @@ NPU 透传：`--device=/dev/accel`
 
 ## Conventions
 
-- **语言**: 中文注释 + 中文用户输出（脚本内错误/提示信息使用中文）
-- **Bash 风格**: `set -euo pipefail`；使用 `local` 变量；颜色输出函数 `info()`/`ok()`/`warn()`/`err()`
-- **错误处理**: 关键步骤 `exit 1` 终止，非关键步骤使用 `warn` 继续
-- **验证**: 使用 `pacman -Qi` 检查包是否已安装；使用 `ldconfig -p` 检测系统库
-- **权限**: `sudo` 用于 `pacman` 安装和写入 `/opt/intel`；AUR helper 调用无需 sudo
-- **不**: 不使用 `makepkg` 打包（脚本直接从源码构建）
+- **语言**: 中文注释 + 中文用户输出
+- **验证**: 构建通过 `docker build`；运行时通过 `--version` 检查
+- **GPU 驱动**: 使用 Intel 官方 GitHub Releases，不依赖发行版包管理器
 
 ## Notes
 
