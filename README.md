@@ -62,6 +62,8 @@ docker run --rm -it -p 8080:8080 -v ~/models:/models \
 - **零依赖运行** — 编译后无需 Python 环境
 - **Docker 容器化** — 基于 Ubuntu 24.04 的多阶段构建
 
+完整参数说明见 [PARAMETERS.md](PARAMETERS.md)。
+
 ---
 
 ## 1. 构建
@@ -308,6 +310,7 @@ E srv decode: Context size has been exceeded. off = 0, n_batch = 1
 ```
 llama-openvino-docker/
 ├── Dockerfile          # 🐳 Docker 多阶段构建（Ubuntu 24.04）
+├── PARAMETERS.md       # 📖 参数参考手册
 ├── README.md           # 📖 本文档
 └── AGENTS.md           # 📋 AI 辅助记忆文件
 ```
