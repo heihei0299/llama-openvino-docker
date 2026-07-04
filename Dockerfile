@@ -23,15 +23,8 @@
 #       llama-openvino:light \
 #       --no-warmup -c 1024 -m /models/model.gguf
 
-ARG OPENVINO_VERSION_MAJOR=2026.2
-ARG OPENVINO_VERSION_FULL=2026.2.0.21903.52ddc073857
+ARG OPENVINO_STACK_VERSION=2026.2
 ARG UBUNTU_VERSION=24.04
-
-ARG IGC_VERSION=v2.36.3
-ARG IGC_VERSION_FULL=2_2.36.3+21719
-ARG COMPUTE_RUNTIME_VERSION=26.22.38646.4
-ARG COMPUTE_RUNTIME_VERSION_FULL=26.22.38646.4-0
-ARG IGDGMM_VERSION=22.10.0
 
 ARG BUILD_DATE=N/A
 ARG APP_VERSION=N/A
@@ -42,8 +35,7 @@ ARG APP_REVISION=N/A
 # ============================================
 FROM docker.io/ubuntu:${UBUNTU_VERSION} AS build
 
-ARG OPENVINO_VERSION_MAJOR
-ARG OPENVINO_VERSION_FULL
+ARG OPENVINO_STACK_VERSION
 ARG http_proxy
 ARG https_proxy
 
@@ -67,15 +59,22 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # 下载并安装 OpenVINO Runtime（Intel 官方归档）
-RUN mkdir -p /opt/intel && \
+RUN case "${OPENVINO_STACK_VERSION}" in \
+        2026.2) \
+            OV_MAJOR=2026.2 && \
+            OV_FULL=2026.2.0.21903.52ddc073857 \
+            ;; \
+        *) echo "Unknown OPENVINO_STACK_VERSION: ${OPENVINO_STACK_VERSION}"; exit 1 ;; \
+    esac && \
+    mkdir -p /opt/intel && \
     TGZ="/tmp/openvino.tgz" && \
-    wget -O "$TGZ" "https://storage.openvinotoolkit.org/repositories/openvino/packages/${OPENVINO_VERSION_MAJOR}/linux/openvino_toolkit_ubuntu24_${OPENVINO_VERSION_FULL}_x86_64.tgz" && \
+    wget -O "$TGZ" "https://storage.openvinotoolkit.org/repositories/openvino/packages/${OV_MAJOR}/linux/openvino_toolkit_ubuntu24_${OV_FULL}_x86_64.tgz" && \
     tar -xzf "$TGZ" -C /opt/intel/ && \
-    mv "/opt/intel/openvino_toolkit_ubuntu24_${OPENVINO_VERSION_FULL}_x86_64" "/opt/intel/openvino_${OPENVINO_VERSION_MAJOR}" && \
-    cd "/opt/intel/openvino_${OPENVINO_VERSION_MAJOR}" && \
+    mv "/opt/intel/openvino_toolkit_ubuntu24_${OV_FULL}_x86_64" "/opt/intel/openvino_${OV_MAJOR}" && \
+    cd "/opt/intel/openvino_${OV_MAJOR}" && \
     echo "Y" | ./install_dependencies/install_openvino_dependencies.sh && \
     cd / && \
-    ln -s "/opt/intel/openvino_${OPENVINO_VERSION_MAJOR}" /opt/intel/openvino && \
+    ln -s "/opt/intel/openvino_${OV_MAJOR}" /opt/intel/openvino && \
     rm -f "$TGZ"
 
 ENV OpenVINO_DIR=/opt/intel/openvino
@@ -107,14 +106,10 @@ RUN mkdir -p /app/full && \
 # ============================================
 FROM docker.io/ubuntu:${UBUNTU_VERSION} AS base
 
+ARG OPENVINO_STACK_VERSION
 ARG BUILD_DATE
 ARG APP_VERSION
 ARG APP_REVISION
-ARG IGC_VERSION
-ARG IGC_VERSION_FULL
-ARG COMPUTE_RUNTIME_VERSION
-ARG COMPUTE_RUNTIME_VERSION_FULL
-ARG IGDGMM_VERSION
 LABEL org.opencontainers.image.created=$BUILD_DATE \
       org.opencontainers.image.version=$APP_VERSION \
       org.opencontainers.image.revision=$APP_REVISION \
@@ -138,23 +133,19 @@ RUN apt-get update && \
 
 # 安装 Intel GPU 驱动（from GitHub releases，确保 OpenVINO GPU plugin 可用）
 # 参照 https://github.com/ggml-org/llama.cpp/blob/master/.devops/openvino.Dockerfile
+COPY scripts/install-gpu-drivers.sh /tmp/
 RUN set -eux; \
-    TMPDIR="$(mktemp -d)"; \
-    cd "$TMPDIR"; \
-    for url in \
-        "https://github.com/intel/intel-graphics-compiler/releases/download/${IGC_VERSION}/intel-igc-core-${IGC_VERSION_FULL}_amd64.deb" \
-        "https://github.com/intel/intel-graphics-compiler/releases/download/${IGC_VERSION}/intel-igc-opencl-${IGC_VERSION_FULL}_amd64.deb" \
-        "https://github.com/intel/compute-runtime/releases/download/${COMPUTE_RUNTIME_VERSION}/intel-ocloc_${COMPUTE_RUNTIME_VERSION_FULL}_amd64.deb" \
-        "https://github.com/intel/compute-runtime/releases/download/${COMPUTE_RUNTIME_VERSION}/intel-opencl-icd_${COMPUTE_RUNTIME_VERSION_FULL}_amd64.deb" \
-        "https://github.com/intel/compute-runtime/releases/download/${COMPUTE_RUNTIME_VERSION}/libigdgmm12_${IGDGMM_VERSION}_amd64.deb" \
-        "https://github.com/intel/compute-runtime/releases/download/${COMPUTE_RUNTIME_VERSION}/libze-intel-gpu1_${COMPUTE_RUNTIME_VERSION_FULL}_amd64.deb"; \
-    do \
-        f="$(basename "$url")"; \
-        wget -q -O "$f" "$url"; \
-    done; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends ./*.deb; \
-    rm -rf /var/lib/apt/lists/* "$TMPDIR"
+    case "${OPENVINO_STACK_VERSION}" in \
+        2026.2) \
+            IGC_VER=v2.36.3 && \
+            IGC_FULL=2_2.36.3+21719 && \
+            CR_VER=26.22.38646.4 && \
+            CR_FULL=26.22.38646.4-0 && \
+            IGDGMM_VER=22.10.0 \
+            ;; \
+        *) echo "Unknown OPENVINO_STACK_VERSION: ${OPENVINO_STACK_VERSION}"; exit 1 ;; \
+    esac; \
+    /tmp/install-gpu-drivers.sh "$IGC_VER" "$IGC_FULL" "$CR_VER" "$CR_FULL" "$IGDGMM_VER"
 
 COPY --from=build /app/lib/ /app/
 

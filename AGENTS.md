@@ -75,6 +75,20 @@ NPU 透传：`--device=/dev/accel`
 - **验证**: 构建通过 `docker build`；运行时通过 `--version` 检查
 - **GPU 驱动**: 使用 Intel 官方 GitHub Releases，不依赖发行版包管理器
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs live as markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+All five canonical roles use their default names (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
 ## Notes
 
 （留白供后续补充）

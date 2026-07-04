@@ -25,6 +25,9 @@ out/
 *.a
 *.gguf
 
+# Code intelligence index
+.codegraph/
+
 # Python
 __pycache__/
 *.pyc

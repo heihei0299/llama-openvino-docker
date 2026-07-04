@@ -1,0 +1,26 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "mcp": {
+    "context7": {
+      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "enabled": true,
+      "type": "local"
+    },
+    "fetch": {
+      "command": ["uvx", "mcp-server-fetch"],
+      "enabled": true,
+      "type": "local"
+    },
+    "playwright": {
+      "command": ["npx", "-y", "@playwright/mcp@0.0.50"],
+      "enabled": true,
+      "type": "local"
+    },
+    "codegraph": {
+      "command": ["codegraph", "serve", "--mcp"],
+      "enabled": true,
+      "type": "local"
+    }
+  }
+}
