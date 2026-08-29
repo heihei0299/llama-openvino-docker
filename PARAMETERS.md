@@ -133,8 +133,8 @@
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `GGML_OPENVINO_DEVICE` | `CPU` | **目标设备**：`CPU` / `GPU` / `NPU` / `GPU.0` |
-| `GGML_OPENVINO_STATEFUL_EXECUTION` | `0` | **状态化 KV 缓存**（GPU 强烈推荐设为 `1`） |
-| `GGML_OPENVINO_CACHE_DIR` | 未设置 | 模型编译缓存目录，避免每次重启重复编译 |
+| `GGML_OPENVINO_STATEFUL_EXECUTION` | `0` | **状态化 KV 缓存**（GPU 强烈推荐设为 `1`，但 server 多会话需 `0`） |
+| `GGML_OPENVINO_CACHE_DIR` | `/tmp/ov_cache` | 模型编译缓存目录，NPU 不支持。镜像已默认 `/tmp/ov_cache`，建议挂载持久卷 `ov_cache:/tmp/ov_cache` |
 | `GGML_OPENVINO_PREFILL_CHUNK_SIZE` | `256` | NPU 预填分块大小（仅 NPU） |
 | `GGML_OPENVINO_DISABLE_CACHE` | `0` | 禁用进程内编译模型缓存 |
 | `GGML_OPENVINO_DISABLE_KV_SLICE` | `0` | 禁用 KV 缓存输入张量切片 |
@@ -149,12 +149,13 @@
 
 ### 设备选择指南
 
-| 设备 | 环境变量 | 推荐场景 |
-|------|---------|---------|
-| CPU | `GGML_OPENVINO_DEVICE=CPU` | 兼容性最佳，内存充足 |
-| GPU | `GGML_OPENVINO_DEVICE=GPU` | 需要高性能 prompt 处理 |
-| NPU | `GGML_OPENVINO_DEVICE=NPU` | 低功耗推理，需限制 `-c 512` |
+| 设备 | 环境变量 | 推荐场景 | 推荐 `-c` | 推荐 `-b`/`-ub` |
+|------|---------|---------|-----------|----------------|
+| CPU | `GGML_OPENVINO_DEVICE=CPU` | 兼容性最佳，内存充足 | CLI `2048` / Server `8192` | `512`/`512` |
+| GPU | `GGML_OPENVINO_DEVICE=GPU` + `STATEFUL=1` | 需要高性能 prompt 处理 | 同 CPU | `512`/`512` |
+| NPU | `GGML_OPENVINO_DEVICE=NPU` | 低功耗推理，需限制 `-c 512` | `512`（强制） | `256`/`256` |
 
+> 完整调优矩阵与一键推荐见 `scripts/tune.sh`；`server` 场景每 slot `= -c / -np`，NPU 固定 `-np 1`。
 ---
 
 ## 八、Benchmark 参数（llama-bench）
@@ -191,23 +192,39 @@ llama-server 支持通过环境变量覆盖命令行参数：
 | `LLAMA_ARG_CTX_CHECKPOINTS` | `-ctxcp, --ctx-checkpoints` |
 | `LLAMA_ARG_ENDPOINT_SLOTS` | `--slots` |
 
-> Docker 镜像 `llama-openvino-docker:server` 预设了 `LLAMA_ARG_CTX_SIZE=8192` 和 `LLAMA_ARG_HOST=0.0.0.0`。传 `-c` 参数会覆盖环境变量。
+> Docker 镜像 `llama-openvino-docker:server` 预设了 `LLAMA_ARG_CTX_SIZE=8192`、`LLAMA_ARG_HOST=0.0.0.0`、`LLAMA_ARG_FLASH_ATTN=1`、`LLAMA_ARG_BATCH=512`、`LLAMA_ARG_UBATCH=512`。`base` 镜像预设 `GGML_OPENVINO_CACHE_DIR=/tmp/ov_cache`。传参 `-c`/`-b` 等会覆盖环境变量。NPU 场景忽略 `CACHE_DIR`。
+>
+> 快速调优：`scripts/tune.sh --device auto --scenario server`；压测：`scripts/benchmark.sh --docker -m /models/model.gguf`
 
+### 性能调优脚本
+
+| 脚本 | 用途 | 基线 |
+|------|------|------|
+| `scripts/tune.sh` | 按设备分级给出 ENV 与 `docker run` 推荐（CPU/GPU/NPU × CLI/Server） | 自动探测核数与 `/dev/dri`、`/dev/accel` |
+| `scripts/benchmark.sh` | 封装 `llama-bench`，支持 `--matrix` 多点对比 | `Llama-3.2-1B Q4_K_M` `p512 n128 r5 -fa 1` |
 ---
 
 ## 十、常用组合速查
 
 ```bash
-# 1. CPU 推理
-llama-cli -m model.gguf -c 2048 --temp 0 -n 256 --no-warmup
+# 1. CPU 推理（带持久化缓存）
+docker volume create ov_cache
+docker run --rm -it -v ~/models:/models -v ov_cache:/tmp/ov_cache \
+  --env=GGML_OPENVINO_DEVICE=CPU \
+  llama-cli -m model.gguf -c 2048 --temp 0 -n 256 -fa 1 --no-warmup
 
-# 2. GPU 推理（OpenVINO）
-GGML_OPENVINO_DEVICE=GPU \
-GGML_OPENVINO_STATEFUL_EXECUTION=1 \
-llama-cli -m model.gguf -c 2048 --temp 0 -n 256 -fa 1
+# 2. GPU 推理（OpenVINO，STATEFUL=1）
+docker volume create ov_cache
+docker run --rm -it -v ~/models:/models -v ov_cache:/tmp/ov_cache \
+  --device=/dev/dri --group-add=$(stat -c "%g" /dev/dri/render* | head -n 1) \
+  -u $(id -u):$(id -g) \
+  --env=GGML_OPENVINO_DEVICE=GPU --env=GGML_OPENVINO_STATEFUL_EXECUTION=1 \
+  llama-cli -m model.gguf -c 2048 --temp 0 -n 256 -fa 1
 
-# 3. API 服务器（4 slots，每 slot 2048 context）
-llama-server -m model.gguf -c 8192 -np 4 --host 0.0.0.0 --port 8080
+# 3. API 服务器（4 slots，每 slot 2048 context，已默认 FLASH_ATTN=1）
+docker volume create ov_cache
+docker run --rm -it -p 8080:8080 -v ~/models:/models -v ov_cache:/tmp/ov_cache \
+  llama-server -m model.gguf -c 8192 -np 4 --host 0.0.0.0 --port 8080
 
 # 4. 翻译场景（确定性输出，小上下文）
 llama-cli -m model.gguf -c 512 --temp 0 -n 256 --no-warmup \
@@ -218,13 +235,18 @@ llama-server -m model.gguf -c 8192 -np 4 --temp 0 -n 256 \
     --host 0.0.0.0 --port 8080
 
 # 6. Docker GPU 服务器
-docker run --rm -it -p 8080:8080 -v ~/models:/models \
+docker volume create ov_cache
+docker run --rm -it -p 8080:8080 -v ~/models:/models -v ov_cache:/tmp/ov_cache \
     --device=/dev/dri \
     --group-add=$(stat -c "%g" /dev/dri/render* | head -n 1) \
     -u $(id -u):$(id -g) \
     --env=GGML_OPENVINO_DEVICE=GPU \
     ghcr.io/heihei0299/llama-openvino-docker:server \
     --no-warmup -c 8192 -m /models/model.gguf --host 0.0.0.0
+
+# 7. 一键调优 + 压测
+scripts/tune.sh --device gpu --scenario server --model /models/Llama-3.2-1B-Q4_K_M.gguf
+scripts/benchmark.sh --docker -m /models/Llama-3.2-1B-Q4_K_M.gguf --device gpu -p 512 -n 128 -r 5 -o md
 ```
 
 ---
