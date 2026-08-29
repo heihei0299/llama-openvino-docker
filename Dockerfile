@@ -167,7 +167,7 @@ RUN set -eux; \
     wget -q -O "libze1_${LIBZE1_VERSION}_amd64.deb" "https://snapshot.ppa.launchpadcontent.net/kobuk-team/intel-graphics/ubuntu/20260606T100000Z/pool/main/l/level-zero-loader/libze1_${LIBZE1_VERSION}_amd64.deb"; \
     cp "libze1_${LIBZE1_VERSION}_amd64.deb" npu/; \
     apt-get update; \
-    apt-get install -y --no-install-recommends npu/*.deb; \
+    apt-get install -y --no-install-recommends ./npu/*.deb; \
     rm -rf /var/lib/apt/lists/* "$TMPDIR"
 
 # OpenVINO 模型编译缓存（持久化可挂载 -v ov_cache:/tmp/ov_cache）
